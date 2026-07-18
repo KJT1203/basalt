@@ -498,32 +498,57 @@ editor.addEventListener('keydown', e => {
 editor.addEventListener('click', () => updateAutocomplete());
 
 /* ================= graph ================= */
-/* ponytail: O(n²) repulsion each frame — fine into the hundreds of notes */
+/* Obsidian-style constellation: pan, zoom, drag, hover-highlighting.
+   ponytail: O(n²) repulsion each frame — fine into the hundreds of notes */
 let graphRAF = null;
 function openGraph() {
   const modal = $('#graphmodal'), cv = $('#graph'), ctx = cv.getContext('2d');
   modal.classList.remove('hidden');
-  cv.width = innerWidth; cv.height = innerHeight;
+  const DPR = devicePixelRatio || 1;
+  cv.width = innerWidth * DPR; cv.height = innerHeight * DPR;
+  cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px';
+
   const names = Object.keys(all);
   const idx = {}; names.forEach((p, i) => idx[baseName(p).toLowerCase()] = i);
+  // color per top-level folder, violet for root notes
+  const folderColors = {}, extras = ['#60a5fa', '#f5a623', '#34d399', '#f472b6', '#facc15'];
+  const colorOf = p => {
+    const f = p.includes('/') ? p.split('/')[0] : '';
+    if (!(f in folderColors)) folderColors[f] = f === '' ? '#a78bfa' : extras[Object.keys(folderColors).length % extras.length];
+    return folderColors[f];
+  };
   const nodes = names.map((p, i) => ({
-    p, name: baseName(p),
-    x: cv.width / 2 + Math.cos(i / names.length * 6.283) * 200 + Math.random() * 40,
-    y: cv.height / 2 + Math.sin(i / names.length * 6.283) * 200 + Math.random() * 40,
+    p, name: baseName(p), color: colorOf(p),
+    x: innerWidth / 2 + Math.cos(i / names.length * 6.283) * 220 + Math.random() * 40,
+    y: innerHeight / 2 + Math.sin(i / names.length * 6.283) * 220 + Math.random() * 40,
     vx: 0, vy: 0, deg: 0
   }));
-  const edges = [];
+  const edges = [], adj = names.map(() => new Set());
   names.forEach((p, i) => {
     for (const m of all[p].matchAll(/\[\[([^\]|\n]+)(?:\|[^\]\n]*)?\]\]/g)) {
       const j = idx[m[1].trim().toLowerCase()];
-      if (j !== undefined && j !== i) { edges.push([i, j]); nodes[i].deg++; nodes[j].deg++; }
+      if (j !== undefined && j !== i) { edges.push([i, j]); nodes[i].deg++; nodes[j].deg++; adj[i].add(j); adj[j].add(i); }
     }
   });
-  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+
+  let scale = 1, ox = 0, oy = 0;            // screen = world * scale + offset
+  let hover = -1, dragNode = -1, panning = false, moved = false, lastX = 0, lastY = 0;
+  const toWorld = (sx, sy) => [(sx - ox) / scale, (sy - oy) / scale];
+  const radiusOf = n => 4 + Math.min(n.deg * 1.5, 13);
+  const hitNode = (sx, sy) => {
+    const [wx, wy] = toWorld(sx, sy);
+    let best = -1, bd = Infinity;
+    nodes.forEach((n, i) => {
+      const d = (n.x - wx) ** 2 + (n.y - wy) ** 2, r = radiusOf(n) + 6 / scale;
+      if (d < r * r && d < bd) { bd = d; best = i; }
+    });
+    return best;
+  };
+
   const step = () => {
     for (let a = 0; a < nodes.length; a++) {
       const n = nodes[a];
-      n.vx += (cv.width / 2 - n.x) * 0.0015; n.vy += (cv.height / 2 - n.y) * 0.0015;
+      n.vx += (innerWidth / 2 - n.x) * 0.0015; n.vy += (innerHeight / 2 - n.y) * 0.0015;
       for (let b = a + 1; b < nodes.length; b++) {
         const m2 = nodes[b];
         let dx = n.x - m2.x, dy = n.y - m2.y;
@@ -539,34 +564,87 @@ function openGraph() {
       n.vx += dx * f / d * Math.min(d, 60); n.vy += dy * f / d * Math.min(d, 60);
       m2.vx -= dx * f / d * Math.min(d, 60); m2.vy -= dy * f / d * Math.min(d, 60);
     }
-    for (const n of nodes) { n.vx *= 0.82; n.vy *= 0.82; n.x += n.vx; n.y += n.vy; }
+    for (const n of nodes) {
+      if (nodes.indexOf(n) === dragNode) { n.vx = 0; n.vy = 0; continue; }
+      n.vx *= 0.82; n.vy *= 0.82; n.x += n.vx; n.y += n.vy;
+    }
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cv.width, cv.height);
-    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.setTransform(DPR * scale, 0, 0, DPR * scale, DPR * ox, DPR * oy);
+    const focused = hover >= 0;
+    // edges
     for (const [a, b] of edges) {
+      const lit = focused && (a === hover || b === hover);
+      ctx.strokeStyle = lit ? 'rgba(167,139,250,0.85)' : focused ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.09)';
+      ctx.lineWidth = (lit ? 1.6 : 1) / scale;
       ctx.beginPath(); ctx.moveTo(nodes[a].x, nodes[a].y); ctx.lineTo(nodes[b].x, nodes[b].y); ctx.stroke();
     }
-    for (const n of nodes) {
-      const r = 5 + Math.min(n.deg * 1.6, 12);
-      ctx.fillStyle = n.deg ? accent : 'rgba(255,255,255,0.28)';
-      ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 7); ctx.fill();
-      ctx.fillStyle = 'rgba(216,216,224,0.75)';
-      ctx.font = '12px Segoe UI';
-      ctx.fillText(n.name, n.x + r + 5, n.y + 4);
+    // nodes + labels
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i], r = radiusOf(n);
+      const isHover = i === hover, isNbr = focused && adj[hover].has(i);
+      const dimmed = focused && !isHover && !isNbr;
+      ctx.globalAlpha = dimmed ? 0.13 : 1;
+      ctx.shadowColor = n.color;
+      ctx.shadowBlur = (isHover ? 26 : isNbr ? 14 : n.deg ? 7 : 0) * scale;
+      ctx.fillStyle = isHover ? '#fff' : n.deg ? n.color : 'rgba(255,255,255,0.35)';
+      ctx.beginPath(); ctx.arc(n.x, n.y, isHover ? r + 2 : r, 0, 7); ctx.fill();
+      ctx.shadowBlur = 0;
+      const showLabel = isHover || isNbr || scale > 0.7 || n.deg > 2;
+      if (showLabel) {
+        ctx.globalAlpha = dimmed ? 0.1 : isHover ? 1 : 0.75;
+        ctx.fillStyle = isHover ? '#fff' : 'rgba(216,216,224,0.9)';
+        ctx.font = (isHover ? 13 : 11.5) / scale + 'px Segoe UI';
+        ctx.fillText(n.name, n.x + r + 6 / scale, n.y + 4 / scale);
+      }
+      ctx.globalAlpha = 1;
     }
     graphRAF = requestAnimationFrame(step);
   };
   step();
-  cv.onclick = e => {
-    let best = null, bd = 400;
-    for (const n of nodes) {
-      const d = (n.x - e.clientX) ** 2 + (n.y - e.clientY) ** 2;
-      if (d < bd) { bd = d; best = n; }
-    }
-    if (best) { closeGraph(); openNote(best.p); }
+
+  cv.onpointerdown = e => {
+    moved = false; lastX = e.clientX; lastY = e.clientY;
+    const hit = hitNode(e.clientX, e.clientY);
+    if (hit >= 0) dragNode = hit; else panning = true;
+    cv.setPointerCapture(e.pointerId);
   };
-  modal.onclick = e => { if (e.target === modal) closeGraph(); };
+  cv.onpointermove = e => {
+    const dx = e.clientX - lastX, dy = e.clientY - lastY;
+    if (dragNode >= 0 || panning) {
+      if (Math.abs(e.clientX - lastX) + Math.abs(e.clientY - lastY) > 0) moved = true;
+      if (dragNode >= 0) {
+        const [wx, wy] = toWorld(e.clientX, e.clientY);
+        nodes[dragNode].x = wx; nodes[dragNode].y = wy;
+      } else { ox += dx; oy += dy; }
+      lastX = e.clientX; lastY = e.clientY;
+    } else {
+      hover = hitNode(e.clientX, e.clientY);
+      cv.style.cursor = hover >= 0 ? 'pointer' : 'grab';
+    }
+  };
+  cv.onpointerup = e => {
+    if (!moved) {
+      const hit = hitNode(e.clientX, e.clientY);
+      if (hit >= 0) { closeGraph(); openNote(nodes[hit].p); }
+    }
+    dragNode = -1; panning = false;
+  };
+  cv.onwheel = e => {
+    e.preventDefault();
+    const k = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    const ns = Math.min(4, Math.max(0.2, scale * k));
+    ox = e.clientX - (e.clientX - ox) * (ns / scale);
+    oy = e.clientY - (e.clientY - oy) * (ns / scale);
+    scale = ns;
+  };
 }
-function closeGraph() { cancelAnimationFrame(graphRAF); $('#graphmodal').classList.add('hidden'); }
+function closeGraph() {
+  cancelAnimationFrame(graphRAF);
+  $('#graphmodal').classList.add('hidden');
+  $('#graph').style.cursor = '';
+}
 $('#graphbtn').onclick = openGraph;
 
 /* ================= global keys ================= */
