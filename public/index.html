@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Basalt</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230d0d10'/%3E%3Ctext x='32' y='45' font-size='34' text-anchor='middle' fill='%23ff9950'%3E%E2%96%B2%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<aside id="side">
+  <div id="brand">▲ Basalt <span id="vaultname"></span></div>
+  <div id="sidebtns">
+    <button id="newnote" title="New note">+ Note</button>
+    <button id="newfolder" title="New folder">+ Folder</button>
+    <button id="todaybtn" title="Open today's journal note">Today</button>
+    <button id="graphbtn" title="Graph view">Graph</button>
+  </div>
+  <input id="search" placeholder="Search notes…  (#tag works too)" spellcheck="false" autocomplete="off">
+  <div id="results" class="hidden"></div>
+  <div id="tree"></div>
+  <div id="tags"></div>
+</aside>
+
+<main>
+  <div id="topbar">
+    <div id="crumb">No note open</div>
+    <div class="grow"></div>
+    <button id="renamebtn" title="Rename note">Rename</button>
+    <button id="modebtn" title="Toggle edit / reading view (Ctrl+E)">Read</button>
+    <button id="delbtn" title="Delete note">Delete</button>
+  </div>
+  <div id="editorwrap">
+    <textarea id="editor" class="hidden" spellcheck="false" placeholder="Start writing…"></textarea>
+    <div id="preview" class="hidden md"></div>
+    <div id="empty">
+      <div class="elogo">▲</div>
+      <div>Open a note from the left, or press <b>Ctrl+O</b></div>
+    </div>
+  </div>
+  <div id="backlinks" class="hidden"></div>
+  <div id="statusbar"><span id="savestate"></span><span class="grow"></span><span id="wordcount"></span></div>
+</main>
+
+<div id="palette" class="hidden">
+  <div class="palbox">
+    <input id="palinput" placeholder="Jump to note…" spellcheck="false" autocomplete="off">
+    <div id="pallist"></div>
+  </div>
+</div>
+
+<div id="graphmodal" class="hidden">
+  <canvas id="graph"></canvas>
+  <div id="graphhint">click a node to open · Esc to close</div>
+</div>
+
+<div id="autocomplete" class="hidden"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
