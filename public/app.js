@@ -95,24 +95,28 @@ function mdRender(src, lineOffset = 0) {
 }
 
 /* ================= saving ================= */
-function setSaveState(t) { $('#savestate').textContent = t; }
+function setSaveState(t, isDirty) {
+  const el = $('#savestate');
+  el.textContent = t;
+  el.dataset.dirty = isDirty ? '1' : '0';
+}
 async function flushSave() {
   clearTimeout(saveTimer);
   if (!dirty || !current) return;
   dirty = false;
   all[current] = editor.value;
-  setSaveState('Saving…');
+  setSaveState('saving');
   await api('/api/note?path=' + encodeURIComponent(current), {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content: editor.value })
   });
-  setSaveState('All changes saved');
+  setSaveState('saved');
   renderTags();
   updateBacklinks();
 }
 editor.addEventListener('input', () => {
   dirty = true;
-  setSaveState('Unsaved…');
+  setSaveState('unsaved', true);
   clearTimeout(saveTimer);
   saveTimer = setTimeout(flushSave, 600);
   updateWordCount();
@@ -135,12 +139,12 @@ async function openNote(p) {
   editor.classList.toggle('hidden', !p || mode !== 'edit');
   preview.classList.toggle('hidden', !p || mode !== 'read');
   $('#backlinks').classList.toggle('hidden', !p);
-  $('#crumb').textContent = p ? p.replace(/\.md$/i, '').split('/').join('  ›  ') : 'No note open';
+  $('#crumb').textContent = p ? p.replace(/\.md$/i, '').split('/').join(' · ') : 'no note open';
   if (!p) { renderTree(); return; }
   editor.value = all[p];
   if (mode === 'read') renderPreview();
   renderTree(); updateBacklinks(); updateWordCount();
-  setSaveState('All changes saved');
+  setSaveState('saved');
   if (mode === 'edit') editor.focus();
 }
 function renderPreview() { preview.innerHTML = mdRender(editor.value); preview.scrollTop = 0; }
@@ -241,7 +245,7 @@ function updateBacklinks() {
       hits.push({ p, line: line.trim() });
     }
   }
-  el.innerHTML = `<h4>Backlinks · ${hits.length}</h4>`;
+  el.innerHTML = `<h4>linked from · ${hits.length}</h4>`;
   for (const h of hits) {
     const row = document.createElement('div');
     row.className = 'blrow';
@@ -251,7 +255,7 @@ function updateBacklinks() {
     row.onclick = () => openNote(h.p);
     el.append(row);
   }
-  if (!hits.length) el.innerHTML += '<div class="blsnip" style="padding:4px 8px;color:var(--dim);font-size:12px">No other note links here yet.</div>';
+  if (!hits.length) el.innerHTML += '<div class="blempty">no other note links here yet</div>';
 }
 
 /* ================= tags ================= */
@@ -497,151 +501,251 @@ editor.addEventListener('keydown', e => {
 });
 editor.addEventListener('click', () => updateAutocomplete());
 
-/* ================= graph ================= */
-/* Obsidian-style constellation: pan, zoom, drag, hover-highlighting.
-   ponytail: O(n²) repulsion each frame — fine into the hundreds of notes */
-let graphRAF = null;
+/* ================= the apparatus — graph sphere ================= */
+/* Every note is a point on a globe; every wikilink an arc between two of them.
+   3D force layout on a shell, perspective projection, painter's-algorithm depth
+   sort. Drag turns it, scroll zooms, hover lights a note's neighbourhood.
+   ponytail: O(n^2) repulsion each frame — fine into the hundreds of notes. */
+let graphRAF = null, graphCleanup = null;
 function openGraph() {
   const modal = $('#graphmodal'), cv = $('#graph'), ctx = cv.getContext('2d');
   modal.classList.remove('hidden');
-  const DPR = devicePixelRatio || 1;
-  cv.width = innerWidth * DPR; cv.height = innerHeight * DPR;
-  cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px';
 
-  const names = Object.keys(all);
-  const idx = {}; names.forEach((p, i) => idx[baseName(p).toLowerCase()] = i);
-  // color per top-level folder, violet for root notes
-  const folderColors = {}, extras = ['#60a5fa', '#f5a623', '#34d399', '#f472b6', '#facc15'];
-  const colorOf = p => {
-    const f = p.includes('/') ? p.split('/')[0] : '';
-    if (!(f in folderColors)) folderColors[f] = f === '' ? '#a78bfa' : extras[Object.keys(folderColors).length % extras.length];
-    return folderColors[f];
+  const css = getComputedStyle(document.documentElement);
+  const tok = n => css.getPropertyValue(n).trim();
+  const C = { accent: tok('--color-accent'), accent2: tok('--color-accent-2'),
+              muted: tok('--color-muted'), ink: tok('--color-ink') };
+  const FONT = tok('--font-body');
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const DPR = Math.min(devicePixelRatio || 1, 2);
+  let W = 0, H = 0, R = 0;
+  const resize = () => {
+    W = innerWidth; H = innerHeight;
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+    R = Math.min(W, H) * 0.3;
   };
-  const nodes = names.map((p, i) => ({
-    p, name: baseName(p), color: colorOf(p),
-    x: innerWidth / 2 + Math.cos(i / names.length * 6.283) * 220 + Math.random() * 40,
-    y: innerHeight / 2 + Math.sin(i / names.length * 6.283) * 220 + Math.random() * 40,
-    vx: 0, vy: 0, deg: 0
-  }));
+  resize();
+  addEventListener('resize', resize);
+
+  const names = Object.keys(all), N = names.length;
+  const idx = {};
+  names.forEach((p, i) => idx[baseName(p).toLowerCase()] = i);
+
+  // Fibonacci sphere — even seeding, no clumping at the poles
+  const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+  const nodes = names.map((p, i) => {
+    const uy = N === 1 ? 0 : 1 - (i / (N - 1)) * 2;
+    const rr = Math.sqrt(Math.max(0, 1 - uy * uy));
+    const th = GOLDEN * i;
+    return { p, name: baseName(p), folder: p.includes('/'),
+             x: Math.cos(th) * rr * R, y: uy * R, z: Math.sin(th) * rr * R,
+             vx: 0, vy: 0, vz: 0, deg: 0 };
+  });
+
   const edges = [], adj = names.map(() => new Set());
   names.forEach((p, i) => {
     for (const m of all[p].matchAll(/\[\[([^\]|\n]+)(?:\|[^\]\n]*)?\]\]/g)) {
       const j = idx[m[1].trim().toLowerCase()];
-      if (j !== undefined && j !== i) { edges.push([i, j]); nodes[i].deg++; nodes[j].deg++; adj[i].add(j); adj[j].add(i); }
+      if (j === undefined || j === i || adj[i].has(j)) continue;
+      edges.push([i, j]);
+      nodes[i].deg++; nodes[j].deg++;
+      adj[i].add(j); adj[j].add(i);
     }
   });
+  $('#graphorient').innerHTML =
+    '<b>basalt</b> · ' + N + (N === 1 ? ' note · ' : ' notes · ') +
+    edges.length + (edges.length === 1 ? ' link' : ' links');
 
-  let scale = 1, ox = 0, oy = 0;            // screen = world * scale + offset
-  let hover = -1, dragNode = -1, panning = false, moved = false, lastX = 0, lastY = 0;
-  const toWorld = (sx, sy) => [(sx - ox) / scale, (sy - oy) / scale];
-  const radiusOf = n => 4 + Math.min(n.deg * 1.5, 13);
-  const hitNode = (sx, sy) => {
-    const [wx, wy] = toWorld(sx, sy);
-    let best = -1, bd = Infinity;
-    nodes.forEach((n, i) => {
-      const d = (n.x - wx) ** 2 + (n.y - wy) ** 2, r = radiusOf(n) + 6 / scale;
-      if (d < r * r && d < bd) { bd = d; best = i; }
-    });
-    return best;
+  // graticule: unit-sphere meridians + parallels, scaled at projection time
+  const SEG = 72, graticule = [];
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI, pts = [];
+    for (let i = 0; i <= SEG; i++) {
+      const t = (i / SEG) * Math.PI * 2;
+      pts.push([Math.cos(t) * Math.cos(a), Math.sin(t), Math.cos(t) * Math.sin(a)]);
+    }
+    graticule.push(pts);
+  }
+  for (let k = 1; k <= 3; k++) {
+    const phi = (k / 4) * Math.PI - Math.PI / 2;
+    const cr = Math.cos(phi), yy = Math.sin(phi), pts = [];
+    for (let i = 0; i <= SEG; i++) {
+      const t = (i / SEG) * Math.PI * 2;
+      pts.push([Math.cos(t) * cr, yy, Math.sin(t) * cr]);
+    }
+    graticule.push(pts);
+  }
+
+  let yaw = 0.6, pitch = -0.3, zoom = 1;
+  let hover = -1, dragging = false, moved = false, lastX = 0, lastY = 0;
+
+  const project = (x, y, z) => {
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    let X = x * cy - z * sy, Z = x * sy + z * cy;
+    const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const Y = y * cp - Z * sp;
+    Z = y * sp + Z * cp;
+    const depth = R * 3.4 + Z;              // smaller depth = nearer the eye
+    const s = (R * 3.1 / depth) * zoom;
+    return [W / 2 + X * s, H / 2 + Y * s, s, Z];
   };
+  const radiusOf = n => 2.6 + Math.min(n.deg * 1.25, 8);
 
-  const step = () => {
-    for (let a = 0; a < nodes.length; a++) {
+  const physics = () => {
+    for (let a = 0; a < N; a++) {
       const n = nodes[a];
-      n.vx += (innerWidth / 2 - n.x) * 0.0015; n.vy += (innerHeight / 2 - n.y) * 0.0015;
-      for (let b = a + 1; b < nodes.length; b++) {
-        const m2 = nodes[b];
-        let dx = n.x - m2.x, dy = n.y - m2.y;
-        const d2 = dx * dx + dy * dy || 1, f = Math.min(1200 / d2, 0.6);
-        dx *= f; dy *= f;
-        n.vx += dx; n.vy += dy; m2.vx -= dx; m2.vy -= dy;
+      for (let b = a + 1; b < N; b++) {
+        const m = nodes[b];
+        let dx = n.x - m.x, dy = n.y - m.y, dz = n.z - m.z;
+        const d2 = dx * dx + dy * dy + dz * dz || 1;
+        const f = Math.min(R * R * 0.35 / d2, 0.8);
+        dx *= f; dy *= f; dz *= f;
+        n.vx += dx; n.vy += dy; n.vz += dz;
+        m.vx -= dx; m.vy -= dy; m.vz -= dz;
       }
     }
+    const rest = R * 0.62;
     for (const [a, b] of edges) {
-      const n = nodes[a], m2 = nodes[b];
-      const dx = m2.x - n.x, dy = m2.y - n.y;
-      const d = Math.sqrt(dx * dx + dy * dy) || 1, f = (d - 130) * 0.002;
-      n.vx += dx * f / d * Math.min(d, 60); n.vy += dy * f / d * Math.min(d, 60);
-      m2.vx -= dx * f / d * Math.min(d, 60); m2.vy -= dy * f / d * Math.min(d, 60);
+      const n = nodes[a], m = nodes[b];
+      const dx = m.x - n.x, dy = m.y - n.y, dz = m.z - n.z;
+      const d = Math.hypot(dx, dy, dz) || 1;
+      const f = (d - rest) * 0.015;
+      const ux = dx / d * f, uy = dy / d * f, uz = dz / d * f;
+      n.vx += ux; n.vy += uy; n.vz += uz;
+      m.vx -= ux; m.vy -= uy; m.vz -= uz;
     }
     for (const n of nodes) {
-      if (nodes.indexOf(n) === dragNode) { n.vx = 0; n.vy = 0; continue; }
-      n.vx *= 0.82; n.vy *= 0.82; n.x += n.vx; n.y += n.vy;
+      n.vx *= 0.78; n.vy *= 0.78; n.vz *= 0.78;
+      n.x += n.vx; n.y += n.vy; n.z += n.vz;
+      // Hard shell: snap back to radius R every frame. A soft spring loses to
+      // repulsion when the vault is small, and the notes drift off the globe.
+      const d = Math.hypot(n.x, n.y, n.z) || 1, k = R / d;
+      n.x *= k; n.y *= k; n.z *= k;
+    }
+  };
+
+  const draw = () => {
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 1; ctx.globalAlpha = 0.05;
+    for (const pts of graticule) {
+      ctx.beginPath();
+      for (let i = 0; i < pts.length; i++) {
+        const q = project(pts[i][0] * R, pts[i][1] * R, pts[i][2] * R);
+        if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]);
+      }
+      ctx.stroke();
     }
 
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, cv.width, cv.height);
-    ctx.setTransform(DPR * scale, 0, 0, DPR * scale, DPR * ox, DPR * oy);
+    const P = nodes.map(n => project(n.x, n.y, n.z));
     const focused = hover >= 0;
-    // edges
-    for (const [a, b] of edges) {
+
+    const eo = edges.map((_, i) => i).sort((a, b) =>
+      (P[edges[b][0]][3] + P[edges[b][1]][3]) - (P[edges[a][0]][3] + P[edges[a][1]][3]));
+    for (const ei of eo) {
+      const a = edges[ei][0], b = edges[ei][1];
       const lit = focused && (a === hover || b === hover);
-      ctx.strokeStyle = lit ? 'rgba(167,139,250,0.85)' : focused ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.09)';
-      ctx.lineWidth = (lit ? 1.6 : 1) / scale;
-      ctx.beginPath(); ctx.moveTo(nodes[a].x, nodes[a].y); ctx.lineTo(nodes[b].x, nodes[b].y); ctx.stroke();
+      const near = 1 - ((P[a][3] + P[b][3]) / 2 + R) / (2 * R);
+      ctx.globalAlpha = lit ? 0.85 : focused ? 0.04 : 0.08 + near * 0.14;
+      ctx.strokeStyle = lit ? C.accent : C.ink;
+      ctx.lineWidth = lit ? 1.4 : 1;
+      ctx.beginPath(); ctx.moveTo(P[a][0], P[a][1]); ctx.lineTo(P[b][0], P[b][1]); ctx.stroke();
     }
-    // nodes + labels
-    for (let i = 0; i < nodes.length; i++) {
-      const n = nodes[i], r = radiusOf(n);
+
+    const order = nodes.map((_, i) => i).sort((a, b) => P[b][3] - P[a][3]);
+    for (const i of order) {
+      const n = nodes[i], sx = P[i][0], sy = P[i][1], s = P[i][2], z = P[i][3];
+      const near = 1 - (z + R) / (2 * R);
       const isHover = i === hover, isNbr = focused && adj[hover].has(i);
-      const dimmed = focused && !isHover && !isNbr;
-      ctx.globalAlpha = dimmed ? 0.13 : 1;
-      ctx.shadowColor = n.color;
-      ctx.shadowBlur = (isHover ? 26 : isNbr ? 14 : n.deg ? 7 : 0) * scale;
-      ctx.fillStyle = isHover ? '#fff' : n.deg ? n.color : 'rgba(255,255,255,0.35)';
-      ctx.beginPath(); ctx.arc(n.x, n.y, isHover ? r + 2 : r, 0, 7); ctx.fill();
+      const dim = focused && !isHover && !isNbr;
+      const col = n.deg === 0 ? C.muted : n.folder ? C.accent2 : C.accent;
+      const r = Math.max(1, radiusOf(n) * s);
+
+      ctx.globalAlpha = dim ? 0.08 : 0.3 + near * 0.7;
+      ctx.fillStyle = isHover ? C.ink : col;
+      if (!dim && (isHover || isNbr || near > 0.55)) {
+        ctx.shadowColor = col;
+        ctx.shadowBlur = (isHover ? 22 : isNbr ? 13 : 6) * s;
+      }
+      ctx.beginPath(); ctx.arc(sx, sy, isHover ? r + 1.5 : r, 0, 7); ctx.fill();
       ctx.shadowBlur = 0;
-      const showLabel = isHover || isNbr || scale > 0.7 || n.deg > 2;
-      if (showLabel) {
-        ctx.globalAlpha = dimmed ? 0.1 : isHover ? 1 : 0.75;
-        ctx.fillStyle = isHover ? '#fff' : 'rgba(216,216,224,0.9)';
-        ctx.font = (isHover ? 13 : 11.5) / scale + 'px Segoe UI';
-        ctx.fillText(n.name, n.x + r + 6 / scale, n.y + 4 / scale);
+
+      if (!dim && (isHover || isNbr || (z < 0 && (n.deg > 1 || zoom > 1.5)))) {
+        ctx.globalAlpha = isHover ? 1 : 0.5 + near * 0.4;
+        ctx.fillStyle = isHover ? C.ink : C.muted;
+        ctx.font = (isHover ? 12.5 : 11) + 'px ' + FONT;
+        ctx.fillText(n.name, sx + r + 6, sy + 4);
       }
       ctx.globalAlpha = 1;
     }
-    graphRAF = requestAnimationFrame(step);
   };
-  step();
 
-  cv.onpointerdown = e => {
-    moved = false; lastX = e.clientX; lastY = e.clientY;
-    const hit = hitNode(e.clientX, e.clientY);
-    if (hit >= 0) dragNode = hit; else panning = true;
+  const hitAt = (mx, my) => {
+    let best = -1, bz = Infinity;
+    for (let i = 0; i < N; i++) {
+      const q = project(nodes[i].x, nodes[i].y, nodes[i].z);
+      const r = Math.max(7, radiusOf(nodes[i]) * q[2] + 5);
+      if ((q[0] - mx) ** 2 + (q[1] - my) ** 2 < r * r && q[3] < bz) { bz = q[3]; best = i; }
+    }
+    return best;
+  };
+
+  const tick = () => {
+    physics();
+    if (!dragging && hover < 0 && !reduced) yaw += 0.0015;   // idle drift, stops on touch
+    draw();
+    graphRAF = requestAnimationFrame(tick);
+  };
+  tick();
+
+  const onDown = e => {
+    dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY;
+    cv.classList.add('dragging');
     cv.setPointerCapture(e.pointerId);
   };
-  cv.onpointermove = e => {
-    const dx = e.clientX - lastX, dy = e.clientY - lastY;
-    if (dragNode >= 0 || panning) {
-      if (Math.abs(e.clientX - lastX) + Math.abs(e.clientY - lastY) > 0) moved = true;
-      if (dragNode >= 0) {
-        const [wx, wy] = toWorld(e.clientX, e.clientY);
-        nodes[dragNode].x = wx; nodes[dragNode].y = wy;
-      } else { ox += dx; oy += dy; }
+  const onMove = e => {
+    if (dragging) {
+      const dx = e.clientX - lastX, dy = e.clientY - lastY;
+      if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
+      yaw += dx * 0.006;
+      pitch = Math.max(-1.45, Math.min(1.45, pitch + dy * 0.006));
       lastX = e.clientX; lastY = e.clientY;
     } else {
-      hover = hitNode(e.clientX, e.clientY);
-      cv.style.cursor = hover >= 0 ? 'pointer' : 'grab';
+      hover = hitAt(e.clientX, e.clientY);
+      cv.style.cursor = hover >= 0 ? 'pointer' : '';
     }
   };
-  cv.onpointerup = e => {
-    if (!moved) {
-      const hit = hitNode(e.clientX, e.clientY);
+  const onUp = e => {
+    cv.classList.remove('dragging');
+    const wasDrag = moved;
+    dragging = false;
+    if (!wasDrag) {
+      const hit = hitAt(e.clientX, e.clientY);
       if (hit >= 0) { closeGraph(); openNote(nodes[hit].p); }
     }
-    dragNode = -1; panning = false;
   };
-  cv.onwheel = e => {
+  const onWheel = e => {
     e.preventDefault();
-    const k = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-    const ns = Math.min(4, Math.max(0.2, scale * k));
-    ox = e.clientX - (e.clientX - ox) * (ns / scale);
-    oy = e.clientY - (e.clientY - oy) * (ns / scale);
-    scale = ns;
+    zoom = Math.min(4, Math.max(0.35, zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+  };
+  cv.addEventListener('pointerdown', onDown);
+  cv.addEventListener('pointermove', onMove);
+  cv.addEventListener('pointerup', onUp);
+  cv.addEventListener('wheel', onWheel, { passive: false });
+
+  graphCleanup = () => {
+    removeEventListener('resize', resize);
+    cv.removeEventListener('pointerdown', onDown);
+    cv.removeEventListener('pointermove', onMove);
+    cv.removeEventListener('pointerup', onUp);
+    cv.removeEventListener('wheel', onWheel);
   };
 }
 function closeGraph() {
   cancelAnimationFrame(graphRAF);
+  if (graphCleanup) { graphCleanup(); graphCleanup = null; }
   $('#graphmodal').classList.add('hidden');
   $('#graph').style.cursor = '';
 }

@@ -67,7 +67,7 @@ async function walk(dir, base = '') {
   return out;
 }
 
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.ico': 'image/x-icon' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
 const json = (res, obj, code = 200) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(obj)); };
 async function readBody(req) { let b = ''; for await (const c of req) b += c; return b ? JSON.parse(b) : {}; }
 
@@ -120,7 +120,8 @@ http.createServer(async (req, res) => {
     if (!fp.startsWith(PUB)) { res.writeHead(403); return res.end(); }
     try {
       const data = await fsp.readFile(fp);
-      res.writeHead(200, { 'Content-Type': (MIME[path.extname(fp).toLowerCase()] || 'application/octet-stream') + '; charset=utf-8' });
+      const type = MIME[path.extname(fp).toLowerCase()] || 'application/octet-stream';
+      res.writeHead(200, { 'Content-Type': /^(text\/|application\/(json|javascript))/.test(type) ? type + '; charset=utf-8' : type });
       res.end(data);
     } catch { res.writeHead(404); res.end('not found'); }
   } catch (e) { json(res, { error: e.message }, 400); }

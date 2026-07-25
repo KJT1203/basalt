@@ -4,23 +4,25 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Basalt</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230d0d10'/%3E%3Ctext x='32' y='45' font-size='34' text-anchor='middle' fill='%23ff9950'%3E%E2%96%B2%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23131019'/%3E%3Cpath d='M32 18 L46 46 L18 46 Z' fill='%23ff9d5c'/%3E%3C/svg%3E">
 <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#0d0d10">
+<meta name="theme-color" content="#12111a">
 <link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preload" href="fonts/instrument-serif-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/geist-400.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <aside id="side">
-  <div id="brand">▲ Basalt <span id="vaultname"></span></div>
+  <div id="brand">basalt <span id="vaultname"></span></div>
   <div id="sidebtns">
-    <button id="newnote" title="New note">+ Note</button>
-    <button id="newfolder" title="New folder">+ Folder</button>
-    <button id="todaybtn" title="Open today's journal note">Today</button>
-    <button id="graphbtn" title="Graph view">Graph</button>
+    <button id="newnote" title="New note">+ note</button>
+    <button id="newfolder" title="New folder">+ folder</button>
+    <button id="todaybtn" title="Open today's journal note">today</button>
+    <button id="graphbtn" title="Open the graph sphere">graph</button>
   </div>
-  <input id="search" placeholder="Search notes…  (#tag works too)" spellcheck="false" autocomplete="off">
+  <input id="search" placeholder="search notes, or #tag" spellcheck="false" autocomplete="off">
   <div id="results" class="hidden"></div>
   <div id="tree"></div>
   <div id="tags"></div>
@@ -28,34 +30,48 @@
 
 <main>
   <div id="topbar">
-    <div id="crumb">No note open</div>
+    <div id="crumb">no note open</div>
     <div class="grow"></div>
-    <button id="renamebtn" title="Rename note">Rename</button>
-    <button id="modebtn" title="Toggle edit / reading view (Ctrl+E)">Read</button>
-    <button id="delbtn" title="Delete note">Delete</button>
+    <button id="renamebtn" title="Rename or move this note">rename</button>
+    <button id="modebtn" title="Toggle source and reading view (Ctrl+E)">read</button>
+    <button id="delbtn" title="Delete this note">delete</button>
   </div>
+
   <div id="editorwrap">
-    <textarea id="editor" class="hidden" spellcheck="false" placeholder="Start writing…"></textarea>
+    <textarea id="editor" class="hidden" spellcheck="false" placeholder="start writing…"></textarea>
     <div id="preview" class="hidden md"></div>
     <div id="empty">
-      <div class="elogo">▲</div>
-      <div>Open a note from the left, or press <b>Ctrl+O</b></div>
+      <div class="elogo"></div>
+      <div class="empty-note">the vault is open.</div>
+      <div class="empty-hint">ctrl+o to jump to a note</div>
     </div>
   </div>
+
   <div id="backlinks" class="hidden"></div>
-  <div id="statusbar"><span id="savestate"></span><span class="grow"></span><span id="wordcount"></span></div>
+
+  <div id="statusbar">
+    <span id="savestate"></span>
+    <span class="grow"></span>
+    <span id="wordcount"></span>
+  </div>
 </main>
 
 <div id="palette" class="hidden">
   <div class="palbox">
-    <input id="palinput" placeholder="Jump to note…" spellcheck="false" autocomplete="off">
+    <input id="palinput" placeholder="jump to a note…" spellcheck="false" autocomplete="off">
     <div id="pallist"></div>
   </div>
 </div>
 
 <div id="graphmodal" class="hidden">
-  <canvas id="graph"></canvas>
-  <div id="graphhint">hover to highlight · scroll to zoom · drag to pan or move nodes · click to open · Esc to close</div>
+  <canvas id="graph" aria-label="Graph of your notes on a rotating sphere. Drag to turn it, scroll to zoom, click a note to open it."></canvas>
+  <div class="graph-orient" id="graphorient"></div>
+  <div class="graph-legend">
+    <span><i class="lg-linked" aria-hidden="true"></i> linked</span>
+    <span><i class="lg-folder" aria-hidden="true"></i> in a folder</span>
+    <span><i class="lg-orphan" aria-hidden="true"></i> no links yet</span>
+  </div>
+  <div class="graph-hint">drag to turn · scroll to zoom<br>click a node to open · esc to close</div>
 </div>
 
 <div id="autocomplete" class="hidden"></div>

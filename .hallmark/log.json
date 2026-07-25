@@ -1,0 +1,16 @@
+[
+  {
+    "date": "2026-07-18",
+    "scope": "app",
+    "genre": "atmospheric",
+    "macrostructure": "Workbench",
+    "theme": "lumen",
+    "drop": "night",
+    "theme_axes": "dark / classical-serif / brass (H 50)",
+    "nav": "N3 side-rail",
+    "footer": "none (app surface)",
+    "enrichment": "none — the graph sphere is the apparatus",
+    "design_system": "design.md",
+    "brief": "Basalt · local-first markdown vault — app shell redesign + 2D force graph rebuilt as a rotating 3D sphere"
+  }
+]
