@@ -19,14 +19,30 @@ the app, Claude reads and writes the same files with its file tools.
 - **Rename refactoring** — renaming a note rewrites `[[wikilinks]` to it across the whole vault
 - **Autosave** — 600 ms debounce; external edits (e.g. by Claude) are picked up when the window regains focus
 
-## Run
+## Install as a desktop app (Windows)
+
+```powershell
+.\install.ps1
+```
+
+Adds **Basalt** to your Start Menu and Desktop with its own icon. Clicking it
+starts the server silently (no console window) and opens Basalt in a clean
+app window with no browser chrome. Clicking it again when it's already running
+just reopens the window — the second server sees the port is taken and exits.
+
+`.\uninstall.ps1` removes the shortcuts. Your notes are never touched.
+
+It's also a PWA: with Basalt open in Edge or Chrome, use the browser menu's
+**Install Basalt** for a second, browser-managed copy of the app window.
+
+## Or just run it
 
 ```
 node server.js            # vault at C:/Study/Vault (created + seeded if missing)
 node server.js D:/notes   # or any folder you like
 ```
 
-Then open http://localhost:8088 — or on Windows just double-click `basalt.bat`.
+Then open http://localhost:8088 — or double-click `basalt.bat`.
 
 The server binds to `127.0.0.1` only: your notes never leave your machine.
 

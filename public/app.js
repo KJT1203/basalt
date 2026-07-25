@@ -671,6 +671,8 @@ addEventListener('focus', async () => {
     updateWordCount();
   }
 });
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
 (async function init() {
   const info = await api('/api/info');
   $('#vaultname').textContent = info.name;

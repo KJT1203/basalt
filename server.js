@@ -67,7 +67,7 @@ async function walk(dir, base = '') {
   return out;
 }
 
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.ico': 'image/x-icon' };
 const json = (res, obj, code = 200) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(obj)); };
 async function readBody(req) { let b = ''; for await (const c of req) b += c; return b ? JSON.parse(b) : {}; }
 
@@ -124,5 +124,12 @@ http.createServer(async (req, res) => {
       res.end(data);
     } catch { res.writeHead(404); res.end('not found'); }
   } catch (e) { json(res, { error: e.message }, 400); }
-}).listen(PORT, '127.0.0.1', () => // ponytail: localhost-only on purpose — this API writes to disk
-  console.log(`Basalt ▲  vault: ${VAULT}  →  http://localhost:${PORT}`));
+})
+  // ponytail: localhost-only on purpose — this API writes to disk
+  .on('error', e => {
+    // the app shortcut launches this every time; a running copy is success, not failure
+    if (e.code === 'EADDRINUSE') { console.log(`Basalt is already running on http://localhost:${PORT}`); process.exit(0); }
+    throw e;
+  })
+  .listen(PORT, '127.0.0.1', () =>
+    console.log(`Basalt ▲  vault: ${VAULT}  →  http://localhost:${PORT}`));
